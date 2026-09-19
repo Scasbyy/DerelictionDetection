@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Street View Facade Ground-Truth Annotator</title>
+  <style>
+    :root {
+      --bg-main: #121418;
+      --bg-panel: #1a1d24;
+      --bg-card: #242832;
+      --bg-card-active: #2d3444;
+      --accent-blue: #3b82f6;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-yellow: #f59e0b;
+      --accent-purple: #a78bfa;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --border-color: #374151;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* TOP HEADER */
+    header {
+      background-color: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      padding: 8px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex: none;
+      z-index: 10;
+    }
+
+    .header-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .header-center { display: flex; flex-direction: column; align-items: center; flex: 1; max-width: 480px; }
+    .header-right { display: flex; align-items: center; gap: 10px; }
+
+    .btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn:hover { background: var(--border-color); }
+    .btn-primary { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-export { background: var(--accent-green); border-color: var(--accent-green); color: #fff; }
+    .btn-export:hover { background: #059669; }
+
+    .progress-bar-container {
+      width: 100%;
+      height: 7px;
+      background: var(--bg-card);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent-green);
+      transition: width 0.2s ease;
+    }
+
+    .file-badge {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 190px;
+    }
+
+    /* WORKSPACE (SPLIT SCREEN) */
+    /* flex:1 + min-height:0 rather than a hard-coded header offset, so the
+       header can wrap on a narrow window without pushing the footer off-screen */
+    .workspace {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* LEFT: IMAGE VIEWPORT (60%) */
+    .viewport-container {
+      flex: 3;
+      position: relative;
+      background: #090a0f;
+      border-right: 1px solid var(--border-color);
+      overflow: hidden;
+      display: flex;
+      cursor: grab;
+    }
+    .viewport-container:active { cursor: grabbing; }
+
+    #image-canvas {
+      position: absolute;
+      transform-origin: 0 0;
+      transition: transform 0.05s ease-out;
+      pointer-events: none;
+      max-width: none;
+    }
+
+    .viewport-hint {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      background: rgba(18, 20, 24, 0.85);
+      border: 1px solid var(--border-color);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    /* RIGHT: ANNOTATION SIDEBAR (40%) */
+    .sidebar {
+      flex: 2;
+      min-width: 420px;
+      max-width: 580px;
+      background: var(--bg-panel);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      scroll-behavior: smooth;
+    }
+
+    .group-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin: 14px 0 6px 0;
+      font-weight: 700;
+    }
+    .group-title:first-child { margin-top: 0; }
+
+    .indicator-row {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 6px 10px;
+      margin-bottom: 5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.1s ease;
+      cursor: pointer;
+    }
+    .indicator-row.active {
+      border-color: var(--accent-blue);
+      background: var(--bg-card-active);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+    }
+    .indicator-row.val-yes { border-left: 4px solid var(--accent-green); }
+    .indicator-row.val-no { border-left: 4px solid var(--border-color); opacity: 0.8; }
+
+    .indicator-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .indicator-index {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-right: 6px;
+      font-family: monospace;
+    }
+
+    .indicator-pill {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      background: #1e222a;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+    }
+    .val-yes .indicator-pill { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); border-color: var(--accent-green); }
+    .val-no .indicator-pill { background: #1e222a; color: var(--text-muted); }
+
+    /* SCORE ROW SPECIAL STYLING */
+    .score-container {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 8px;
+    }
+    .score-container.active {
+      border-color: var(--accent-yellow);
+      box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.4);
+    }
+    .score-pills {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .score-pill {
+      flex: 1;
+      text-align: center;
+      padding: 6px 0;
+      border-radius: 4px;
+      background: #181b22;
+      border: 1px solid var(--border-color);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+    .score-pill.selected {
+      background: var(--accent-yellow);
+      color: #000;
+      border-color: var(--accent-yellow);
+    }
+
+    /* HUMAN VERDICT — the ground-truth field for the regression */
+    .verdict-container {
+      background: var(--bg-card);
+      border: 2px solid var(--accent-purple);
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 14px;
+      margin-bottom: 8px;
+    }
+    .verdict-container.active {
+      box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.45);
+    }
+    .verdict-pills { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+    .verdict-pill {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 10px;
+      border-radius: 4px;
+      background: #181b22;
+      border: 1px solid var(--border-color);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .verdict-pill .vkey {
+      font-family: monospace;
+      background: #0e1015;
+      border: 1px solid var(--border-color);
+      border-radius: 3px;
+      padding: 1px 6px;
+      font-size: 11px;
+      color: #fff;
+      flex: none;
+    }
+    .verdict-pill.selected.v-vac { background: var(--accent-red); color: #fff; border-color: var(--accent-red); }
+    .verdict-pill.selected.v-occ { background: var(--accent-green); color: #fff; border-color: var(--accent-green); }
+    .verdict-pill.selected.v-uns { background: var(--text-muted); color: #000; border-color: var(--text-muted); }
+    .verdict-pill.selected .vkey { background: rgba(0,0,0,0.35); color: #fff; }
+    .verdict-note {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 8px;
+      line-height: 1.45;
+      border-top: 1px solid var(--border-color);
+      padding-top: 7px;
+    }
+
+    .batch-input {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 6px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: monospace;
+      width: 150px;
+    }
+    .batch-input:focus { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
+
+    /* ---------- AI COMPARISON OVERLAY ---------- */
+    .cmp-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(9, 10, 15, 0.93);
+      display: none;
+      flex-direction: column;
+      padding: 18px 22px;
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .cmp-overlay.show { display: flex; }
+    .cmp-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      border-bottom: 1px solid var(--border-color); padding-bottom: 9px; margin-bottom: 12px;
+    }
+    .cmp-title { font-size: 15px; font-weight: 700; }
+    .cmp-count { font-size: 12px; font-family: monospace; }
+    .cmp-count.agree { color: var(--accent-green); }
+    .cmp-count.differ { color: var(--accent-yellow); }
+
+    .cmp-verdict {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;
+    }
+    .cmp-vbox {
+      background: var(--bg-card); border: 1px solid var(--border-color);
+      border-radius: 6px; padding: 9px 12px;
+    }
+    .cmp-vbox .lbl {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+      color: var(--text-muted); margin-bottom: 3px;
+    }
+    .cmp-vbox .val { font-size: 14px; font-weight: 700; }
+    .cmp-vbox.mismatch { border-color: var(--accent-yellow); box-shadow: 0 0 0 1px var(--accent-yellow); }
+
+    .cmp-rationale {
+      background: var(--bg-card); border-left: 3px solid var(--accent-blue);
+      border-radius: 4px; padding: 9px 12px; margin-bottom: 12px;
+      font-size: 12.5px; line-height: 1.5; color: var(--text-muted);
+    }
+    .cmp-rationale b { color: var(--text-main); }
+
+    .cmp-grid { display: flex; flex-direction: column; gap: 3px; }
+    .cmp-row {
+      display: grid; grid-template-columns: 1fr 62px 62px; gap: 8px;
+      align-items: center; padding: 4px 9px; border-radius: 4px;
+      background: var(--bg-card); font-size: 12px;
+    }
+    .cmp-row.diff { background: rgba(245, 158, 11, 0.16); border-left: 3px solid var(--accent-yellow); }
+    .cmp-row.hdr {
+      background: transparent; font-size: 10px; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--text-muted); font-weight: 700; padding-bottom: 2px;
+    }
+    .cmp-name { font-family: monospace; }
+    .cmp-cell {
+      text-align: center; font-family: monospace; font-weight: 700; font-size: 11px;
+      padding: 2px 0; border-radius: 3px;
+    }
+    .cmp-cell.yes { background: rgba(16,185,129,.22); color: var(--accent-green); }
+    .cmp-cell.no  { color: var(--text-muted); }
+    .cmp-foot {
+      margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-color);
+      font-size: 12px; color: var(--text-muted); text-align: center;
+    }
+    .cmp-none {
+      background: rgba(239,68,68,.14); border: 1px solid var(--accent-red);
+      color: #fca5a5; border-radius: 6px; padding: 10px 12px; font-size: 12.5px;
+    }
+    .toggle-btn.on { background: var(--accent-green); border-color: var(--accent-green); color: #fff; }
+
+    /* FOOTER CHEAT SHEET */
+    .footer-bar {
+      background: var(--bg-card);
+      border-top: 1px solid var(--border-color);
+      padding: 6px 14px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+    .kbd {
+      background: #121418;
+      border: 1px solid var(--border-color);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: monospace;
+      color: #fff;
+    }
+
+    #empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      width: 100%;
+      color: var(--text-muted);
+      text-align: center;
+      gap: 12px;
+      position: absolute;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="header-left">
+      <label class="btn btn-primary">
+        📁 Select Images Folder
+        <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;">
+      </label>
+      <span class="file-badge" id="file-info">No folder loaded</span>
+      <input type="text" class="batch-input" id="batch-tag" placeholder="batch tag…"
+             title="Stamped on every exported row, e.g. GD_vacant_Q3_2022. Lets you merge batches later.">
+      <label class="btn" title="Restore your progress from a previously exported CSV">
+        ↩ Resume
+        <input type="file" id="resume-input" accept=".csv" style="display:none;">
+      </label>
+      <label class="btn" title="Load AI_Results_For_Comparison.csv to see Gemini's answer after each verdict">
+        🤖 AI CSV
+        <input type="file" id="ai-input" accept=".csv" style="display:none;">
+      </label>
+      <button class="btn toggle-btn" id="reveal-toggle"
+              title="Show the AI comparison after each verdict (never before)">Reveal: OFF</button>
+    </div>
+
+    <div class="header-center">
+      <div style="font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; width: 100%;">
+        <span id="progress-text">0 / 0 Annotated (0%)</span>
+        <span id="image-counter">Image 0 of 0</span>
+      </div>
+      <div class="progress-bar-container">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <button class="btn" id="prev-img-btn" title="Previous Image (←)">◀ Prev</button>
+      <button class="btn" id="next-img-btn" title="Next Image (→)">Next ▶</button>
+      <button class="btn btn-export" id="export-btn" title="Download Completed CSV">💾 Export CSV</button>
+    </div>
+  </header>
+
+  <!-- MAIN WORKSPACE -->
+  <div class="workspace">
+    <!-- LEFT: IMAGE VIEWPORT WITH PAN/ZOOM -->
+    <div class="viewport-container" id="viewport">
+      <div id="empty-state">
+        <p style="font-size: 16px; font-weight: 600;">No images loaded</p>
+        <p style="font-size: 13px;">Click "Select Images Folder" above to begin.</p>
+      </div>
+      <img id="image-canvas" src="" alt="" style="display: none;">
+      <div class="viewport-hint" id="viewport-hint" style="display: none;">
+        🖱️ <b>Scroll</b> to zoom | <b>Click &amp; Drag</b> to pan | <b>Double Click</b> to center
+      </div>
+
+      <!-- AI COMPARISON — only ever rendered AFTER a verdict is committed -->
+      <div class="cmp-overlay" id="cmp-overlay"></div>
+    </div>
+
+    <!-- RIGHT: ANNOTATION CHECKLIST -->
+    <div class="sidebar">
+      <div class="sidebar-scroll" id="indicator-list">
+        <!-- Generated Dynamically -->
+      </div>
+
+      <div class="footer-bar">
+        <span><span class="kbd">1</span> Yes &nbsp;|&nbsp; <span class="kbd">2</span> No &nbsp;|&nbsp; <span class="kbd">0-5</span> Score &nbsp;|&nbsp; <span class="kbd">1-5</span> Verdict &rarr; next image</span>
+        <span><span class="kbd">↑</span>/<span class="kbd">↓</span> Navigate &nbsp;|&nbsp; <span class="kbd">←</span>/<span class="kbd">→</span> Image &nbsp;|&nbsp; <span class="kbd">C</span> Compare &nbsp;|&nbsp; <span class="kbd">Esc</span> Close</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. SCHEMA DEFINITION
+    // =========================================================================
+    const SCHEMA = [
+      {
+        group: "Gatekeeper Rule",
+        fields: [
+          { key: "has_target_building", label: "has_target_building", hint: "Set true ONLY if >=50% of facade is visible" }
+        ]
+      },
+      {
+        group: "Structural Dereliction",
+        fields: [
+          { key: "boarded_up", label: "boarded_up", hint: "Timber/steel screens sealing windows/doors" },
+          { key: "infilled_apertures", label: "infilled_apertures", hint: "Masonry/brick permanently filling openings" },
+          { key: "smashed_glass", label: "smashed_glass", hint: "Broken, missing or cracked windowpanes" },
+          { key: "roof_damage", label: "roof_damage", hint: "Missing tiles/slates, sagging roof, broken chimney" },
+          { key: "facade_decay", label: "facade_decay", hint: "Crumbling render, peeling paint, damp stains" },
+          { key: "structural_vegetation", label: "structural_vegetation", hint: "Plants/ivy growing out of walls/roofs/gutters" },
+          { key: "exposed_wiring", label: "exposed_wiring", hint: "Loose, disconnected external cables" }
+        ]
+      },
+      {
+        group: "Vacancy & Neglect",
+        fields: [
+          { key: "fixed_grilles", label: "fixed_grilles", hint: "Permanent mesh/security barriers" },
+          { key: "external_padlocks", label: "external_padlocks", hint: "External chains, hasps or padlocks" },
+          { key: "internal_debris", label: "internal_debris", hint: "Piled junk/uncollected mail visible inside" },
+          { key: "threshold_debris", label: "threshold_debris", hint: "Dirt/weeds accumulated at door seams" },
+          { key: "overgrown_grounds", label: "overgrown_grounds", hint: "Unmanaged brambles/tall grass in curtilage" },
+          { key: "graffiti", label: "graffiti", hint: "Tagging on main facade" },
+          { key: "obsolete_signage", label: "obsolete_signage", hint: "Faded 'To Let' or abandoned shop signs" },
+          { key: "notices", label: "notices", hint: "Statutory paper notices taped to glass" },
+          { key: "for_sale_sign", label: "for_sale_sign", hint: "Presence of for sale signage" }
+        ]
+      },
+      {
+        group: "Active Occupancy",
+        fields: [
+          { key: "active_vehicles", label: "active_vehicles", hint: "Vehicles in private driveway/boundary" },
+          { key: "domestic_items", label: "domestic_items", hint: "Pots, welcome mats, toys, outdoor furniture" },
+          { key: "waste_management", label: "waste_management", hint: "Municipal wheelie bins inside property" },
+          { key: "maintained_curtilage", label: "maintained_curtilage", hint: "Mowed lawn, pruned hedges, tended garden" }
+        ]
+      },
+      {
+        group: "AI Severity Score",
+        fields: [
+          { key: "vacancy_score", label: "vacancy_score (0 - 5)", isScore: true, hint: "0=Pristine, 1=Minor wear, 2=Early vacant, 3=Secured, 4=Severe decay, 5=Ruin" }
+        ]
+      },
+      {
+        group: "Your Verdict  →  GROUND TRUTH",
+        fields: [
+          { key: "human_verdict", label: "Is this building vacant?", isVerdict: true,
+            hint: "Your own judgement. This is what the regression trains on." }
+        ]
+      }
+    ];
+
+    // verdict code -> (GROUND_TRUTH, confident flag). 5 = excluded from the regression.
+    const VERDICT_OPTIONS = [
+      { code: 1, key: "1", cls: "v-vac", text: "Vacant — confident",   gt: 1,  conf: 1 },
+      { code: 2, key: "2", cls: "v-vac", text: "Vacant — probable",    gt: 1,  conf: 0 },
+      { code: 3, key: "3", cls: "v-occ", text: "Occupied — probable",  gt: 0,  conf: 0 },
+      { code: 4, key: "4", cls: "v-occ", text: "Occupied — confident", gt: 0,  conf: 1 },
+      { code: 5, key: "5", cls: "v-uns", text: "Cannot tell",          gt: "", conf: "" }
+    ];
+    const VERDICT_BY_CODE = {};
+    VERDICT_OPTIONS.forEach(o => VERDICT_BY_CODE[o.code] = o);
+
+    const ALL_FIELDS = [];
+    SCHEMA.forEach(group => group.fields.forEach(f => ALL_FIELDS.push(f)));
+
+    // =========================================================================
+    // 2. APPLICATION STATE
+    // =========================================================================
+    const RATER_ID = "SC";        // change if a second person codes a batch (inter-rater test)
+    let imageFiles = [];
+    let currentImageIndex = 0;
+    let activeFieldPointer = 0;   
+    let annotations = {};         
+
+    let scale = 1.0;
+    let panX = 0;
+    let panY = 0;
+    let isPanning = false;
+    let startX = 0;
+    let startY = 0;
+
+    const viewport = document.getElementById('viewport');
+    const imageCanvas = document.getElementById('image-canvas');
+    const emptyState = document.getElementById('empty-state');
+    const viewportHint = document.getElementById('viewport-hint');
+    const indicatorList = document.getElementById('indicator-list');
+    const folderInput = document.getElementById('folder-input');
+    const fileInfo = document.getElementById('file-info');
+    const progressText = document.getElementById('progress-text');
+    const progressFill = document.getElementById('progress-fill');
+    const imageCounter = document.getElementById('image-counter');
+    const prevBtn = document.getElementById('prev-img-btn');
+    const nextBtn = document.getElementById('next-img-btn');
+    const exportBtn = document.getElementById('export-btn');
+
+    // =========================================================================
+    // 3. INITIALIZATION & UI BUILD
+    // =========================================================================
+    function buildSidebarUI() {
+      indicatorList.innerHTML = '';
+      let fieldCounter = 1;
+
+      SCHEMA.forEach(group => {
+        const title = document.createElement('div');
+        title.className = 'group-title';
+        title.innerText = group.group;
+        indicatorList.appendChild(title);
+
+        group.fields.forEach(field => {
+          const globalIdx = ALL_FIELDS.indexOf(field);
+
+          if (field.isScore) {
+            const scoreBox = document.createElement('div');
+            scoreBox.className = 'score-container';
+            scoreBox.id = `field-row-${globalIdx}`;
+            scoreBox.onclick = () => setFieldPointer(globalIdx);
+
+            scoreBox.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="indicator-name"><span class="indicator-index">${fieldCounter}.</span>${field.label}</span>
+                <span class="file-badge">${field.hint}</span>
+              </div>
+              <div class="score-pills">
+                <div class="score-pill" id="pill-score-0">0: Occupied</div>
+                <div class="score-pill" id="pill-score-1">1: Cosmetic</div>
+                <div class="score-pill" id="pill-score-2">2: Unsecured</div>
+                <div class="score-pill" id="pill-score-3">3: Secured</div>
+                <div class="score-pill" id="pill-score-4">4: Breached</div>
+                <div class="score-pill" id="pill-score-5">5: Ruin</div>
+              </div>
+            `;
+            indicatorList.appendChild(scoreBox);
+          } else if (field.isVerdict) {
+            const vBox = document.createElement('div');
+            vBox.className = 'verdict-container';
+            vBox.id = `field-row-${globalIdx}`;
+            vBox.onclick = () => setFieldPointer(globalIdx);
+
+            const pills = VERDICT_OPTIONS.map(o => `
+              <div class="verdict-pill ${o.cls}" id="pill-verdict-${o.code}"
+                   onclick="event.stopPropagation(); chooseVerdict(${o.code});">
+                <span class="vkey">${o.key}</span>${o.text}
+              </div>`).join('');
+
+            vBox.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="indicator-name"><span class="indicator-index">${fieldCounter}.</span>${field.label}</span>
+                <span class="file-badge">ground truth</span>
+              </div>
+              <div class="verdict-pills">${pills}</div>
+              <div class="verdict-note">
+                Judge the <b>building</b>, not just the facade. Use the other GSV years for the same
+                address where you can — nothing changing across captures is strong evidence.
+                <b>Cannot tell</b> is a real answer; those rows are kept in the CSV but excluded from the regression.
+              </div>
+            `;
+            indicatorList.appendChild(vBox);
+          } else {
+            const row = document.createElement('div');
+            row.className = 'indicator-row';
+            row.id = `field-row-${globalIdx}`;
+            row.onclick = () => setFieldPointer(globalIdx);
+
+            row.innerHTML = `
+              <div>
+                <span class="indicator-index">${fieldCounter}.</span>
+                <span class="indicator-name">${field.label}</span>
+              </div>
+              <span class="indicator-pill" id="pill-${field.key}">UNSET</span>
+            `;
+            indicatorList.appendChild(row);
+          }
+          fieldCounter++;
+        });
+      });
+    }
+
+    // =========================================================================
+    // 4. IMAGE INGESTION & PARSING
+    // =========================================================================
+    folderInput.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      const validExts = ['.jpg', '.jpeg', '.png'];
+      imageFiles = files.filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+
+      if (imageFiles.length === 0) {
+        alert("No valid .jpg or .png images found in the selected folder!");
+        return;
+      }
+
+      imageFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+      loadFromLocalStorage();
+
+      currentImageIndex = 0;
+      activeFieldPointer = 0;
+      emptyState.style.display = 'none';
+      imageCanvas.style.display = 'block';
+      viewportHint.style.display = 'block';
+
+      loadImage(currentImageIndex);
+      updateProgress();
+    });
+
+    function loadImage(index) {
+      if (index < 0 || index >= imageFiles.length) return;
+      hideComparison();
+      currentImageIndex = index;
+      const file = imageFiles[index];
+
+      fileInfo.innerText = file.name;
+      imageCounter.innerText = `Image ${index + 1} of ${imageFiles.length}`;
+
+      if (!annotations[file.name]) {
+        annotations[file.name] = {
+          Filename: file.name,
+          has_target_building: null,
+          vacancy_score: null,
+          human_verdict: null
+        };
+        const cleanName = file.name.replace("_Facade.jpg", "").replace(".jpg", "");
+        const parts = cleanName.split("_");
+        annotations[file.name].Bldg_GUID = parts[0] || "UNKNOWN";
+        annotations[file.name].Capture_Date = parts[1] || "UNKNOWN";
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        imageCanvas.src = e.target.result;
+        imageCanvas.onload = () => {
+          resetView();
+        };
+      };
+      reader.readAsDataURL(file);
+
+      activeFieldPointer = 0;
+      renderSidebarValues();
+      setFieldPointer(0);
+      updateProgress();
+    }
+
+    // =========================================================================
+    // 5. PAN & ZOOM ENGINE (PERFECT CENTERING & SCROLLING)
+    // =========================================================================
+    function updateTransform() {
+      imageCanvas.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    }
+
+    function resetView() {
+      if (!imageCanvas.naturalWidth) return;
+      
+      const rect = viewport.getBoundingClientRect();
+      const scaleX = rect.width / imageCanvas.naturalWidth;
+      const scaleY = rect.height / imageCanvas.naturalHeight;
+      scale = Math.min(scaleX, scaleY, 1.0) * 0.95;
+
+      panX = (rect.width - (imageCanvas.naturalWidth * scale)) / 2;
+      panY = (rect.height - (imageCanvas.naturalHeight * scale)) / 2;
+      
+      updateTransform();
+    }
+
+    viewport.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = viewport.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const zoomFactor = e.deltaY < 0 ? 1.2 : 0.8;
+      const newScale = Math.min(Math.max(scale * zoomFactor, 0.2), 15.0);
+
+      panX = mouseX - (mouseX - panX) * (newScale / scale);
+      panY = mouseY - (mouseY - panY) * (newScale / scale);
+      scale = newScale;
+      updateTransform();
+    }, { passive: false });
+
+    viewport.addEventListener('mousedown', (e) => {
+      if (e.button === 0) {
+        isPanning = true;
+        startX = e.clientX - panX;
+        startY = e.clientY - panY;
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isPanning) return;
+      panX = e.clientX - startX;
+      panY = e.clientY - startY;
+      updateTransform();
+    });
+
+    window.addEventListener('mouseup', () => { isPanning = false; });
+    viewport.addEventListener('dblclick', resetView);
+
+    // =========================================================================
+    // 6. SIDEBAR RENDERING (WITH CENTER-SCROLL TRACKING)
+    // =========================================================================
+    function renderSidebarValues() {
+      const file = imageFiles[currentImageIndex];
+      if (!file) return;
+      const data = annotations[file.name] || {};
+
+      ALL_FIELDS.forEach((field, idx) => {
+        const val = data[field.key];
+        const row = document.getElementById(`field-row-${idx}`);
+
+        if (field.isScore) {
+          for (let i = 0; i <= 5; i++) {
+            const p = document.getElementById(`pill-score-${i}`);
+            if (p) p.classList.remove('selected');
+          }
+          if (val !== null && val !== undefined) {
+            const selectedPill = document.getElementById(`pill-score-${val}`);
+            if (selectedPill) selectedPill.classList.add('selected');
+          }
+        } else if (field.isVerdict) {
+          VERDICT_OPTIONS.forEach(o => {
+            const p = document.getElementById(`pill-verdict-${o.code}`);
+            if (p) p.classList.remove('selected');
+          });
+          if (val !== null && val !== undefined) {
+            const p = document.getElementById(`pill-verdict-${val}`);
+            if (p) p.classList.add('selected');
+          }
+        } else {
+          const pill = document.getElementById(`pill-${field.key}`);
+          row.classList.remove('val-yes', 'val-no');
+
+          if (val === 1 || val === true) {
+            row.classList.add('val-yes');
+            pill.innerText = 'YES [1]';
+          } else if (val === 0 || val === false) {
+            row.classList.add('val-no');
+            pill.innerText = 'NO [2]';
+          } else {
+            pill.innerText = 'UNSET';
+          }
+        }
+      });
+    }
+
+    function setFieldPointer(index) {
+      activeFieldPointer = Math.max(0, Math.min(index, ALL_FIELDS.length - 1));
+
+      ALL_FIELDS.forEach((_, idx) => {
+        const row = document.getElementById(`field-row-${idx}`);
+        if (row) row.classList.remove('active');
+      });
+
+      const activeRow = document.getElementById(`field-row-${activeFieldPointer}`);
+      if (activeRow) {
+        activeRow.classList.add('active');
+        
+        // THIS IS THE FIX: 'block: center' forces the active row to the middle of the screen
+        activeRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+// =========================================================================
+    // 7. RAPID-FIRE KEYBOARD ENGINE
+    // =========================================================================
+    // =========================================================================
+    // 6b. CSV PARSING / RESUME / AI RESULTS
+    // =========================================================================
+    let aiResults = {};        // guid(lower) -> {ai_*: value}
+    let revealOn = false;
+    let comparisonShowing = false;
+
+    function parseCSV(text) {
+      // handles quoted fields, embedded commas and "" escapes
+      text = text.replace(/^﻿/, '');
+      const rows = [];
+      let row = [], cell = '', inQ = false;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQ) {
+          if (c === '"') { if (text[i+1] === '"') { cell += '"'; i++; } else inQ = false; }
+          else cell += c;
+        } else if (c === '"') inQ = true;
+        else if (c === ',') { row.push(cell); cell = ''; }
+        else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+        else if (c !== '\r') cell += c;
+      }
+      if (cell.length || row.length) { row.push(cell); rows.push(row); }
+      if (!rows.length) return [];
+      const hdr = rows[0].map(h => h.trim());
+      return rows.slice(1)
+        .filter(r => r.length && r.some(v => v !== ''))
+        .map(r => Object.fromEntries(hdr.map((h, i) => [h, (r[i] ?? '').trim()])));
+    }
+
+    function num(v) {
+      if (v === '' || v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isNaN(n) ? null : n;
+    }
+
+    document.getElementById('resume-input').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = ev => {
+        const recs = parseCSV(ev.target.result);
+        let restored = 0;
+        recs.forEach(r => {
+          const fn = r.Filename;
+          if (!fn) return;
+          if (r.verdict_label === 'NOT RATED' && r.human_verdict === '') return;
+          const a = annotations[fn] || { Filename: fn };
+          a.Bldg_GUID = r.Bldg_GUID || a.Bldg_GUID;
+          a.Capture_Date = r.Capture_Date || a.Capture_Date;
+          a.has_target_building = num(r.has_target_building);
+          a.vacancy_score = num(r.vacancy_score);
+          a.human_verdict = num(r.human_verdict);
+          ALL_FIELDS.forEach(fl => {
+            if (!fl.isScore && !fl.isVerdict && fl.key !== 'has_target_building' && r[fl.key] !== undefined) {
+              a[fl.key] = num(r[fl.key]);
+            }
+          });
+          annotations[fn] = a;
+          if (a.human_verdict !== null) restored++;
+        });
+        saveToLocalStorage();
+        renderSidebarValues();
+        updateProgress();
+        alert(`Restored ${restored} rated buildings from ${f.name}.`);
+      };
+      rd.readAsText(f);
+      e.target.value = '';
+    });
+
+    document.getElementById('ai-input').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = ev => {
+        aiResults = {};
+        parseCSV(ev.target.result).forEach(r => {
+          if (r.Bldg_GUID) aiResults[r.Bldg_GUID.trim().toLowerCase()] = r;
+        });
+        const n = Object.keys(aiResults).length;
+        alert(`Loaded AI results for ${n} buildings.` + (n ? '\n\nTurn "Reveal" on to compare after each verdict.' : ''));
+        if (n) { revealOn = true; syncRevealBtn(); }
+      };
+      rd.readAsText(f);
+      e.target.value = '';
+    });
+
+    function syncRevealBtn() {
+      const b = document.getElementById('reveal-toggle');
+      b.innerText = 'Reveal: ' + (revealOn ? 'ON' : 'OFF');
+      b.classList.toggle('on', revealOn);
+    }
+    document.getElementById('reveal-toggle').onclick = () => {
+      if (!revealOn && !Object.keys(aiResults).length) {
+        alert('Load AI_Results_For_Comparison.csv first (the "AI CSV" button).');
+        return;
+      }
+      revealOn = !revealOn;
+      syncRevealBtn();
+      if (!revealOn) hideComparison();
+    };
+
+    // =========================================================================
+    // 6c. COMPARISON PANEL  (rendered only after a verdict is committed)
+    // =========================================================================
+    const CMP_FIELDS = ALL_FIELDS
+      .filter(f => !f.isScore && !f.isVerdict)
+      .map(f => f.key);
+
+    function buildComparison(filename) {
+      const mine = annotations[filename] || {};
+      const guid = String(mine.Bldg_GUID || '').toLowerCase();
+      const ai = aiResults[guid];
+      const box = document.getElementById('cmp-overlay');
+
+      if (!ai) {
+        box.innerHTML = `<div class="cmp-head"><span class="cmp-title">No AI record</span></div>
+          <div class="cmp-none">No row in the AI results CSV for GUID <b>${guid || '(unknown)'}</b>.
+          Check you loaded the right file for this batch.</div>
+          <div class="cmp-foot">Press <span class="kbd">Enter</span> or <span class="kbd">→</span> for the next building</div>`;
+        return;
+      }
+
+      let diffs = 0;
+      const rows = CMP_FIELDS.map(k => {
+        const mv = (mine[k] === 1 || mine[k] === true) ? 1 : 0;
+        const av = num(ai['ai_' + k]) === 1 ? 1 : 0;
+        const d = mv !== av;
+        if (d) diffs++;
+        return `<div class="cmp-row${d ? ' diff' : ''}">
+            <span class="cmp-name">${k}</span>
+            <span class="cmp-cell ${mv ? 'yes' : 'no'}">${mv ? 'YES' : '·'}</span>
+            <span class="cmp-cell ${av ? 'yes' : 'no'}">${av ? 'YES' : '·'}</span>
+          </div>`;
+      }).join('');
+
+      const myScore = mine.vacancy_score ?? '-';
+      const aiScore = num(ai.ai_vacancy_score);
+      const scoreDiff = myScore !== aiScore;
+      if (scoreDiff) diffs++;
+
+      const v = VERDICT_BY_CODE[mine.human_verdict];
+      const myGT = v ? v.gt : '';
+      const aiVac = (ai.ai_status || '').toUpperCase() === 'VACANT' ? 1 : 0;
+      const verdictDiff = (myGT === 1 || myGT === 0) && myGT !== aiVac;
+
+      box.innerHTML = `
+        <div class="cmp-head">
+          <span class="cmp-title">You vs Gemini</span>
+          <span class="cmp-count ${diffs ? 'differ' : 'agree'}">
+            ${diffs ? diffs + ' of ' + (CMP_FIELDS.length + 1) + ' fields differ' : 'complete agreement'}
+          </span>
+        </div>
+        <div class="cmp-verdict">
+          <div class="cmp-vbox${verdictDiff ? ' mismatch' : ''}">
+            <div class="lbl">Your verdict</div>
+            <div class="val">${v ? v.text : '-'}</div>
+          </div>
+          <div class="cmp-vbox${verdictDiff ? ' mismatch' : ''}">
+            <div class="lbl">Gemini</div>
+            <div class="val">${ai.ai_status || '-'} <span style="font-size:11px;color:var(--text-muted)">(${ai.ai_prob || '?'}%)</span></div>
+          </div>
+          <div class="cmp-vbox${scoreDiff ? ' mismatch' : ''}">
+            <div class="lbl">Your severity score</div><div class="val">${myScore}</div>
+          </div>
+          <div class="cmp-vbox${scoreDiff ? ' mismatch' : ''}">
+            <div class="lbl">Gemini severity score</div><div class="val">${aiScore ?? '-'}</div>
+          </div>
+        </div>
+        <div class="cmp-rationale"><b>Gemini's reasoning:</b> ${ai.ai_rationale || '(none)'}</div>
+        <div class="cmp-grid">
+          <div class="cmp-row hdr"><span>Indicator</span><span style="text-align:center">You</span><span style="text-align:center">AI</span></div>
+          ${rows}
+        </div>
+        <div class="cmp-foot">Press <span class="kbd">Enter</span> or <span class="kbd">→</span> for the next building &nbsp;·&nbsp; <span class="kbd">Esc</span> to dismiss</div>`;
+    }
+
+    function showComparison(filename) {
+      buildComparison(filename);
+      document.getElementById('cmp-overlay').classList.add('show');
+      comparisonShowing = true;
+    }
+    function hideComparison() {
+      document.getElementById('cmp-overlay').classList.remove('show');
+      comparisonShowing = false;
+    }
+
+    function chooseVerdict(code) {
+      const currentFile = imageFiles[currentImageIndex];
+      if (!currentFile) return;
+      recordValue(currentFile.name, 'human_verdict', code);
+      saveToLocalStorage();
+      // Reveal only ever happens here — after the verdict is committed.
+      if (revealOn && Object.keys(aiResults).length) {
+        showComparison(currentFile.name);
+      } else {
+        goToNextImage();
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (imageFiles.length === 0) return;
+      // don't hijack typing in the batch-tag box
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+
+      const currentFile = imageFiles[currentImageIndex];
+      const activeField = ALL_FIELDS[activeFieldPointer];
+
+      // 0. COMPARISON OVERLAY swallows input until dismissed
+      if (comparisonShowing) {
+        e.preventDefault();
+        if (e.key === 'Enter' || e.key === 'ArrowRight' || e.key === ' ') {
+          hideComparison();
+          goToNextImage();
+        } else if (e.key === 'Escape') {
+          hideComparison();
+        } else if (e.key === 'ArrowLeft') {
+          hideComparison();
+          goToPrevImage();
+        }
+        return;
+      }
+
+      // C = show the AI comparison on demand for an already-rated building
+      if ((e.key === 'c' || e.key === 'C') && currentFile) {
+        const a = annotations[currentFile.name];
+        if (a && a.human_verdict !== null && a.human_verdict !== undefined
+            && Object.keys(aiResults).length) {
+          e.preventDefault();
+          showComparison(currentFile.name);
+          return;
+        }
+      }
+
+      // 1. SCORE ENTRY (Checks this FIRST so 1 and 2 don't get stolen)
+      if (activeField.isScore && ['0', '1', '2', '3', '4', '5'].includes(e.key)) {
+        e.preventDefault();
+        const scoreVal = parseInt(e.key, 10);
+        recordValue(currentFile.name, 'vacancy_score', scoreVal);
+        saveToLocalStorage();
+        advanceField();   // -> lands on the verdict field, which advances the image
+      }
+      // 1b. VERDICT ENTRY (final field: records ground truth, then next image)
+      else if (activeField.isVerdict && ['1', '2', '3', '4', '5'].includes(e.key)) {
+        e.preventDefault();
+        chooseVerdict(parseInt(e.key, 10));
+      }
+      // 2. YES / TRUE (Only triggers if NOT on the score or verdict field)
+      else if (e.key === '1' && !activeField.isScore && !activeField.isVerdict) {
+        e.preventDefault();
+        recordValue(currentFile.name, activeField.key, 1);
+        advanceField();
+      }
+      // 3. NO / FALSE (Only triggers if NOT on the score or verdict field)
+      else if (e.key === '2' && !activeField.isScore && !activeField.isVerdict) {
+        e.preventDefault();
+        recordValue(currentFile.name, activeField.key, 0);
+
+        if (activeField.key === 'has_target_building') {
+          applyGatekeeperZeroOut(currentFile.name);
+          saveToLocalStorage();
+          goToNextImage();
+          return;
+        }
+        advanceField();
+      }
+      
+      // ... Keep your ArrowUp, ArrowDown, ArrowLeft, ArrowRight keys below here exactly as they are!
+      else if (e.key === 'ArrowUp' || e.key === 'Backspace') {
+        e.preventDefault();
+        setFieldPointer(activeFieldPointer - 1);
+      }
+      else if (e.key === 'ArrowDown' || e.key === ' ') {
+        e.preventDefault();
+        advanceField();
+      }
+      else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        goToPrevImage();
+      }
+      else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        goToNextImage();
+      }
+    });
+
+    function recordValue(filename, key, val) {
+      if (!annotations[filename]) annotations[filename] = {};
+      annotations[filename][key] = val;
+      renderSidebarValues();
+      saveToLocalStorage();
+      updateProgress();
+    }
+
+    function advanceField() {
+      if (activeFieldPointer < ALL_FIELDS.length - 1) {
+        setFieldPointer(activeFieldPointer + 1);
+      }
+    }
+
+    function applyGatekeeperZeroOut(filename) {
+      ALL_FIELDS.forEach(f => {
+        if (f.key !== 'has_target_building' && !f.isVerdict) {
+          annotations[filename][f.key] = 0;
+        }
+      });
+      annotations[filename]['vacancy_score'] = 0;
+      // occluded -> no defensible verdict. Code 5 keeps the row in the CSV but
+      // leaves GROUND_TRUTH blank, so the regression drops it automatically.
+      annotations[filename]['human_verdict'] = 5;
+    }
+
+    function goToNextImage() {
+      if (currentImageIndex < imageFiles.length - 1) {
+        loadImage(currentImageIndex + 1);
+      }
+    }
+
+    function goToPrevImage() {
+      if (currentImageIndex > 0) {
+        loadImage(currentImageIndex - 1);
+      }
+    }
+
+    prevBtn.onclick = goToPrevImage;
+    nextBtn.onclick = goToNextImage;
+
+    // =========================================================================
+    // 8. PERSISTENCE & CSV EXPORT
+    // =========================================================================
+    function saveToLocalStorage() {
+      try {
+        localStorage.setItem('facade_annotations_master', JSON.stringify(annotations));
+      } catch (e) {
+        console.warn("Storage quota full, unable to save to localStorage.");
+      }
+    }
+
+    function loadFromLocalStorage() {
+      try {
+        const saved = localStorage.getItem('facade_annotations_master');
+        if (saved) annotations = JSON.parse(saved);
+      } catch (e) {
+        annotations = {};
+      }
+    }
+
+    function updateProgress() {
+      if (imageFiles.length === 0) return;
+      let completed = 0;
+
+      let vac = 0, occ = 0, unsure = 0;
+
+      imageFiles.forEach(f => {
+        const data = annotations[f.name];
+        if (data && data.has_target_building !== null &&
+            data.human_verdict !== null && data.human_verdict !== undefined) {
+          completed++;
+          const o = VERDICT_BY_CODE[data.human_verdict];
+          if (o) { if (o.gt === 1) vac++; else if (o.gt === 0) occ++; else unsure++; }
+        }
+      });
+
+      const pct = Math.round((completed / imageFiles.length) * 100);
+      progressText.innerText =
+        `${completed} / ${imageFiles.length} done (${pct}%)  ·  ${vac} vacant / ${occ} occupied / ${unsure} unsure`;
+      progressFill.style.width = `${pct}%`;
+    }
+
+    exportBtn.onclick = () => {
+      if (imageFiles.length === 0) {
+        alert("No data to export!");
+        return;
+      }
+
+      const batchTag = (document.getElementById('batch-tag').value || '').trim();
+
+      // Column order matches the Colab pipeline, then the new ground-truth block.
+      const indicatorKeys = ALL_FIELDS
+        .filter(f => f.key !== 'has_target_building' && !f.isScore && !f.isVerdict)
+        .map(f => f.key);
+
+      const headers = ["Filename", "Bldg_GUID", "Capture_Date", "has_target_building"]
+        .concat(indicatorKeys)
+        .concat(["vacancy_score",
+                 "GROUND_TRUTH",       // 1 / 0 / blank  <- the regression trains on this
+                 "human_verdict",      // raw 1-5 code
+                 "verdict_label",      // human-readable
+                 "verdict_confident",  // 1 = confident, 0 = probable, blank = cannot tell
+                 "rater",              // who coded it (for inter-rater work later)
+                 "batch_tag",
+                 "coded_at"]);
+
+      const esc = v => {
+        const s = (v === null || v === undefined) ? "" : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+
+      const stamp = new Date().toISOString();
+      const rows = [headers.join(",")];
+      let skipped = 0;
+
+      imageFiles.forEach(f => {
+        const data = annotations[f.name] || {};
+        const v = VERDICT_BY_CODE[data.human_verdict];
+        if (!v) skipped++;
+
+        const row = [
+          esc(f.name),
+          esc(data.Bldg_GUID || 'UNKNOWN'),
+          esc(data.Capture_Date || 'UNKNOWN'),
+          data.has_target_building !== null && data.has_target_building !== undefined ? data.has_target_building : 0
+        ];
+
+        indicatorKeys.forEach(k => {
+          row.push(data[k] !== null && data[k] !== undefined ? data[k] : 0);
+        });
+
+        row.push(data.vacancy_score !== null && data.vacancy_score !== undefined ? data.vacancy_score : 0);
+        // Unrated and "cannot tell" both export a BLANK GROUND_TRUTH so the
+        // regression's notna() filter drops them instead of reading them as occupied.
+        row.push(v ? v.gt : "");
+        row.push(data.human_verdict !== null && data.human_verdict !== undefined ? data.human_verdict : "");
+        row.push(esc(v ? v.text : "NOT RATED"));
+        row.push(v ? v.conf : "");
+        row.push(esc(RATER_ID));
+        row.push(esc(batchTag));
+        row.push(stamp);
+        rows.push(row.join(","));
+      });
+
+      if (skipped > 0 &&
+          !confirm(`${skipped} of ${imageFiles.length} images have no verdict yet.\n\n` +
+                   `They will export with a blank GROUND_TRUTH and be dropped by the regression.\n\nExport anyway?`)) {
+        return;
+      }
+
+      // Blob rather than a data: URI — encodeURI() breaks on '#' and on large files.
+      const blob = new Blob(["﻿" + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Human_Ground_Truth_${batchTag ? batchTag + '_' : ''}${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    };
+
+    buildSidebarUI();
+  </script>
+</body>
+</html>
